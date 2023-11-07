@@ -147,6 +147,8 @@ class Model(LightningModule):
         self.contrastive_loss = ContrastiveLoss(0.07,self.args.noise_text_ratio, self.args.normalize_contrast)
         self.neg_prompt_embed = None
 
+        self.validation_step_outputs = []
+
     def training_step(self, batch, batch_idx):
 
         samples, gt_density, boxes, m_flag, prompt_gt, prompt_add = batch
@@ -239,14 +241,26 @@ class Model(LightningModule):
         heatmap_pred = 0.33 * img_log + 0.67 * pred_density
         gt_density_log = einops.repeat(gt_density_log, 'h w -> c h w', c=3)
         heatmap_gt = 0.33 * img_log + 0.67 * gt_density_log
+        self.validation_step_outputs.append(
+            {
+                "mae": batch_mae,
+                "rmse": batch_rmse,
+                "img": img_log,
+                "pred": pred_log_rgb,
+                "gt": gt_log_rgb,
+                "heatmap_pred": heatmap_pred,
+                "heatmap_gt": heatmap_gt,
+                "prompt": prompt[0],
+                "pred_cnts": pred_cnts,
+                "gt_cnts": gt_cnts
+            }
+        )
 
-        return {"mae": batch_mae, "rmse": batch_rmse, "img": img_log, "pred": pred_log_rgb, "gt": gt_log_rgb, "heatmap_pred": heatmap_pred, "heatmap_gt": heatmap_gt, "prompt": prompt[0], "pred_cnts": pred_cnts, "gt_cnts": gt_cnts}
-    
-    def validation_epoch_end(self, outputs):
+    def on_validation_epoch_end(self):
         all_mae = []
         all_rmse = []
 
-        for output in outputs:
+        for output in self.validation_step_outputs:
             all_mae += output["mae"]
             all_rmse += output["rmse"]
         val_mae = np.mean(all_mae)
@@ -255,15 +269,15 @@ class Model(LightningModule):
         self.log('val_rmse', val_rmse)
 
         # log the image
-        idx = random.randint(0, len(outputs)-1)
-        img = outputs[idx]["img"]
-        pred = outputs[idx]["pred"]
-        gt = outputs[idx]["gt"]
-        heatmap_pred = outputs[idx]["heatmap_pred"]
-        heatmap_gt = outputs[idx]["heatmap_gt"]
-        prompt = outputs[idx]["prompt"]
-        pred_cnts = outputs[idx]["pred_cnts"]
-        gt_cnts = outputs[idx]["gt_cnts"]
+        idx = random.randint(0, len(self.validation_step_outputs)-1)
+        img = self.validation_step_outputs[idx]["img"]
+        pred = self.validation_step_outputs[idx]["pred"]
+        gt = self.validation_step_outputs[idx]["gt"]
+        heatmap_pred = self.validation_step_outputs[idx]["heatmap_pred"]
+        heatmap_gt = self.validation_step_outputs[idx]["heatmap_gt"]
+        prompt = self.validation_step_outputs[idx]["prompt"]
+        pred_cnts = self.validation_step_outputs[idx]["pred_cnts"]
+        gt_cnts = self.validation_step_outputs[idx]["gt_cnts"]
         pred_gt = "pred: {:.2f} gt: {:.2f}".format(pred_cnts[0], gt_cnts[0])
         self.logger.experiment.add_image("val_img", img, self.current_epoch)
         self.logger.experiment.add_image("density_pred", pred, self.current_epoch)
@@ -272,6 +286,8 @@ class Model(LightningModule):
         self.logger.experiment.add_image("overlay_gt", heatmap_gt, self.current_epoch)
         self.logger.experiment.add_text("prompt", prompt, self.current_epoch)
         self.logger.experiment.add_text("count", pred_gt, self.current_epoch)
+
+        self.validation_step_outputs.clear()
     
     def test_step(self, batch, batch_idx):
         if self.args.dataset_type=='FSC' or self.args.dataset_type == "COCO":

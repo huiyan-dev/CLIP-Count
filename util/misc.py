@@ -20,7 +20,7 @@ import argparse
 
 import torch
 import torch.distributed as dist
-from torch._six import inf
+from torch import inf
 import numpy as np
 import random
 
